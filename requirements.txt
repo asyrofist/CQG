@@ -1,0 +1,5 @@
+fastnlp==0.6.0
+transformers
+rouge
+nltk
+pandas
