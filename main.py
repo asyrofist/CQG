@@ -10,9 +10,10 @@ from fastNLP import CrossEntropyLoss
 from fastNLP.embeddings import BertWordPieceEncoder
 from fastNLP import BucketSampler
 from transformers.utils.dummy_flax_objects import FlaxGPTNeoForCausalLM
+
 #from fastNLP.modules.decoder import TransformerSeq2SeqDecoder
-from model.Decoder import TransformerSeq2SeqDecoder
 #from fastNLP.modules.generator import SequenceGenerator
+from model.Decoder import TransformerSeq2SeqDecoder
 from model.Generator import SequenceGenerator
 from torch.optim import Adam
 from fastNLP.models import CNNText, STSeqCls
@@ -82,7 +83,10 @@ class Bert2tf(nn.Module):
         batch_size, tgt_len, _ = output.size()
         pred = output.reshape(batch_size * tgt_len, -1)
         gold = target[:, 1:].contiguous().view(-1)
-        loss = self.criterion(pred, gold)
+        # print(type(pred))
+        # print(type(gold))
+        # loss = self.criterion(pred, gold)
+        loss = self.criterion(pred, gold.long())
         
         return {'loss': loss}
 
@@ -120,6 +124,11 @@ from utils.util import get_optimizers, clip_gradients
 from transformers.models.mbart.modeling_mbart import shift_tokens_right
 import nltk
 import os
+import pandas as pd
+
+
+# nltk.download('punkt')
+# nltk.download('wordnet')
 
 
 def set_seed(args):
@@ -132,9 +141,10 @@ def set_seed(args):
 
 def parse_arguments(parser: argparse.ArgumentParser):
     # data Hyperparameters
-    parser.add_argument('--device', type=str, default="cuda:0", choices=['cpu', 'cuda:0', 'cuda:1', 'cuda:2'],
+    parser.add_argument('--device', type=str, default="cpu", choices=['cpu', 'cuda:0', 'cuda:1', 'cuda:2'],
                         help="GPU/CPU devices")
-    parser.add_argument('--batch_size', type=int, default=32, help="default batch size is 10 (works well)")
+    # parser.add_argument('--batch_size', type=int, default=32, help="default batch size is 10 (works well)")
+    parser.add_argument('--batch_size', type=int, default=10, help="default batch size is 10 (works well)")
     parser.add_argument('--max_seq_length', type=int, default=100, help="maximum sequence length")
     parser.add_argument('--generated_max_length', type=int, default=150, help="maximum target length")
     parser.add_argument('--max_candidate_length', type=int, default=20, help="maximum number of candidate tokens")
@@ -145,9 +155,8 @@ def parse_arguments(parser: argparse.ArgumentParser):
     parser.add_argument('--train_file', type=str, default="data/train.json")
     parser.add_argument('--dev_file', type=str, default="data/dev.json")
     parser.add_argument('--test_file', type=str, default="data/test.json")
-    parser.add_argument('--gpus', type=bool, default=True)
-
-
+    # parser.add_argument('--gpus', type=bool, default=True)
+    parser.add_argument('--gpus', type=bool, default=False)
     parser.add_argument('--seed', type=int, default=42, help="random seed")
 
     # model
@@ -161,7 +170,8 @@ def parse_arguments(parser: argparse.ArgumentParser):
     parser.add_argument('--mode', type=str, default="train", help="training or testing")
     parser.add_argument('--learning_rate', type=float, default=2e-5, help="learning rate of the AdamW optimizer")
     parser.add_argument('--max_grad_norm', type=float, default=1.0, help="The maximum gradient norm")
-    parser.add_argument('--num_epochs', type=int, default=50, help="The number of epochs to run")
+    # parser.add_argument('--num_epochs', type=int, default=50, help="The number of epochs to run")
+    parser.add_argument('--num_epochs', type=int, default=2, help="The number of epochs to run")
     parser.add_argument('--early_stop', type=int, default=8, help="The number of epochs to early stop")
     parser.add_argument('--task', type=str, default="bert2tf")
 
@@ -263,7 +273,8 @@ def test(config: Config, valid_dataloader: DataLoader, model: nn.Module, dev: to
     targets = []
     with torch.no_grad(), torch.cuda.amp.autocast(enabled=False):
         for index, batch in tqdm(enumerate(valid_dataloader), desc="--validation", total=len(valid_dataloader)):
-            generated_ids = model.module.generate(batch.input_ids.to(dev), batch.flag.to(dev))
+            generated_ids = model.generate(batch.input_ids.to(dev), batch.flag.to(dev))
+            # Bert2tf.generate(batch.input_ids.to(dev), batch.flag.to(dev))
             '''
             target_id = batch.label_id.to(dev)
             lm_labels = target_id.clone()
@@ -302,12 +313,14 @@ def test(config: Config, valid_dataloader: DataLoader, model: nn.Module, dev: to
         rouge_score += rouge.get_scores([pred], [gold])[0]['rouge-l']['f']
         pred = nltk.word_tokenize(pred)
         gold = nltk.word_tokenize(gold)
+
         preds.append(pred)
         golds.append([gold])
         num += 1
         #print(gold)
         m_score += nltk.translate.meteor_score.meteor_score([gold], pred)
     BLEUscore = nltk.translate.bleu_score.corpus_bleu(golds, preds)
+
     '''
     print(nltk.translate.bleu_score.corpus_bleu(golds, preds, weights=(1,0,0,0)))
     print(nltk.translate.bleu_score.corpus_bleu(golds, preds, weights=(0.5,0.5,0,0)))
@@ -325,11 +338,19 @@ def test(config: Config, valid_dataloader: DataLoader, model: nn.Module, dev: to
         pred1 = tokenizer.tokenize(pred)
         gold = tokenizer.tokenize(gold)
         s = nltk.translate.bleu_score.sentence_bleu([gold], pred1)
-        file_data.append((pred, s))
+        # file_data.append((pred, s))
+        dict1.update(score= s)
+        # dict1 = {'pred': pred, 'gold': gold, 'score': s}
         new_data.append(dict1)
+        
+    # data_str = json.dumps(new_data, indent=4, ensure_ascii=False)
+    # with open("case.json", 'w', encoding="utf-8") as f:
+    #     f.write(data_str)
+
     data_str = json.dumps(new_data, indent=4, ensure_ascii=False)
-    with open("case.json", 'w') as f:
+    with open("case_text.json", 'w', encoding="utf-8") as f:
         f.write(data_str)
+
     #print(len(file_data))
     '''
     with open("pred/bert2tf.txt", "w") as f:
@@ -352,8 +373,20 @@ def test(config: Config, valid_dataloader: DataLoader, model: nn.Module, dev: to
             f.write(str(line[1]) + "\n")
     '''
     print(BLEUscore)
-    return BLEUscore
+
+    # df1 = pd.DataFrame(
+    #                     [predictions_text, targets_text],
+    #                     columns=    ["Predictions_Text", "Targets_Text"]
+    #                   )
+    # df2 = pd.DataFrame(
+    #                     [golds, preds, BLEUscore],
+    #                     columns=    ["Golds", "Preds", "BLEUscore"]
+    #                   )
+    # with pd.ExcelWriter('output_cqg.xlsx') as writer:
+    #     df1.to_excel(writer, sheet_name='Sheet_name_1')
+    #     df2.to_excel(writer, sheet_name='Sheet_name_2')    
     
+    return BLEUscore
 
 
 def main():
